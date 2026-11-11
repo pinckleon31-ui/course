@@ -1,0 +1,778 @@
+'use strict';
+
+/* ============================================================
+   Ma liste de courses — logique client
+   - route /            : accueil (créer une liste)
+   - route /l/<secret>  : la liste partagée
+   - synchronisation temps réel (SSE) + secours par interrogation
+   - mises à jour optimistes : l’interface répond tout de suite,
+     puis se recale sur la version du serveur ; en cas d’échec,
+     on annule et on propose « Réessayer ».
+   ============================================================ */
+
+const LAST_LIST_KEY = 'mlc:lastListId';
+
+const el = (id) => document.getElementById(id);
+
+const ui = {
+  viewHome: el('viewHome'),
+  viewList: el('viewList'),
+  viewMissing: el('viewMissing'),
+
+  createBtn: el('createBtn'),
+  resumeBtn: el('resumeBtn'),
+  resumeName: el('resumeName'),
+
+  addForm: el('addForm'),
+  nameInput: el('nameInput'),
+  qtyInput: el('qtyInput'),
+  addBtn: el('addBtn'),
+  addError: el('addError'),
+
+  copyBtn: el('copyBtn'),
+  headerShare: el('headerShare'),
+  brandLink: el('brandLink'),
+
+  syncState: el('syncState'),
+  syncText: el('syncText'),
+
+  todoList: el('todoList'),
+  doneList: el('doneList'),
+  todoCount: el('todoCount'),
+  doneCount: el('doneCount'),
+  emptyState: el('emptyState'),
+  doneEmpty: el('doneEmpty'),
+
+  toast: el('toast'),
+  toastText: el('toastText'),
+  toastAction: el('toastAction'),
+
+  banner: el('storageBanner'),
+  bannerTitle: el('storageBannerTitle'),
+  bannerText: el('storageBannerText'),
+  bannerDetailsBtn: el('storageDetailsBtn'),
+  bannerDetails: el('storageDetails'),
+  bannerClose: el('storageBannerClose'),
+
+  editDialog: el('editDialog'),
+  editForm: el('editForm'),
+  editName: el('editName'),
+  editQty: el('editQty'),
+  editError: el('editError'),
+  editSave: el('editSave'),
+  editCancel: el('editCancel'),
+  editDelete: el('editDelete'),
+  deleteConfirm: el('deleteConfirm'),
+  deleteQuestion: el('deleteQuestion'),
+  confirmDelete: el('confirmDelete'),
+  cancelDelete: el('cancelDelete'),
+};
+
+const state = {
+  view: 'home',
+  listId: null,
+  list: { id: null, revision: 0, items: [] },
+  adding: false,
+  editing: null, // article en cours d’édition
+  source: null, // EventSource
+  pollTimer: null,
+  bannerDismissed: false,
+  dbOnline: null,
+};
+
+/* ------------------------------------------------------------------ */
+/* Utilitaires                                                         */
+/* ------------------------------------------------------------------ */
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function api(path, options = {}) {
+  let response;
+  try {
+    response = await fetch(path, {
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      ...options,
+    });
+  } catch {
+    throw new Error('Pas de connexion. Vérifie ton réseau puis réessaie.');
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch { /* réponse vide */ }
+
+  if (!response.ok) {
+    const message = (payload && payload.error) || 'La modification n’a pas pu être enregistrée.';
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+let toastTimer = null;
+function showToast(message, { error = false, action = null, duration = 3200 } = {}) {
+  clearTimeout(toastTimer);
+  ui.toastText.textContent = message;
+  ui.toast.classList.toggle('is-error', Boolean(error));
+  ui.toastAction.hidden = !action;
+  ui.toastAction.textContent = action ? action.label : 'Réessayer';
+  ui.toastAction.onclick = action
+    ? () => {
+        hideToast();
+        action.onClick();
+      }
+    : null;
+  ui.toast.hidden = false;
+  requestAnimationFrame(() => ui.toast.classList.add('is-visible'));
+  toastTimer = setTimeout(hideToast, action ? Math.max(duration, 7000) : duration);
+}
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  ui.toast.classList.remove('is-visible');
+  setTimeout(() => {
+    if (!ui.toast.classList.contains('is-visible')) ui.toast.hidden = true;
+  }, 220);
+}
+
+function setSync(kind, text) {
+  ui.syncState.classList.remove('is-live', 'is-offline', 'is-error');
+  if (kind) ui.syncState.classList.add(`is-${kind}`);
+  ui.syncText.textContent = text;
+}
+
+/* ------------------------------------------------------------------ */
+/* Rendu                                                               */
+/* ------------------------------------------------------------------ */
+
+const CHECK_SVG =
+  '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7"/></svg>';
+const PENCIL_SVG =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m14.5 6.5 3 3"/></svg>';
+
+function itemRow(item) {
+  const li = document.createElement('li');
+  li.className = `item${item.done ? ' is-done' : ''}`;
+  li.dataset.id = item.id;
+
+  const check = document.createElement('button');
+  check.type = 'button';
+  check.className = 'item-check';
+  check.setAttribute('role', 'checkbox');
+  check.setAttribute('aria-checked', item.done ? 'true' : 'false');
+  check.setAttribute(
+    'aria-label',
+    item.done ? `Décocher ${item.name}` : `Marquer ${item.name} comme acheté`
+  );
+  check.dataset.action = 'toggle';
+  check.innerHTML = `<span class="check-box">${CHECK_SVG}</span>`;
+
+  const main = document.createElement('button');
+  main.type = 'button';
+  main.className = 'item-main';
+  main.dataset.action = 'edit';
+  main.setAttribute('aria-label', `Modifier ${item.name}`);
+  main.innerHTML =
+    `<span class="item-name">${escapeHtml(item.name)}</span>` +
+    (item.quantity ? `<span class="item-qty">${escapeHtml(item.quantity)}</span>` : '');
+
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'item-edit';
+  edit.dataset.action = 'edit';
+  edit.setAttribute('aria-label', `Options de ${item.name}`);
+  edit.innerHTML = PENCIL_SVG;
+
+  li.append(check, main, edit);
+  return li;
+}
+
+function renderItems() {
+  const items = state.list.items || [];
+  const todo = items.filter((item) => !item.done);
+  const done = items.filter((item) => item.done);
+
+  ui.todoList.replaceChildren(...todo.map(itemRow));
+  ui.doneList.replaceChildren(...done.map(itemRow));
+
+  ui.todoCount.textContent = String(todo.length);
+  ui.doneCount.textContent = String(done.length);
+
+  ui.emptyState.hidden = todo.length > 0 || done.length > 0;
+  ui.doneEmpty.hidden = done.length > 0;
+}
+
+function applyList(list, { fromServer = true } = {}) {
+  if (!list) return;
+  if (fromServer && state.list && list.revision < state.list.revision) return;
+  state.list = list;
+  renderItems();
+}
+
+/* ------------------------------------------------------------------ */
+/* Navigation                                                          */
+/* ------------------------------------------------------------------ */
+
+function showView(view) {
+  state.view = view;
+  ui.viewHome.hidden = view !== 'home';
+  ui.viewList.hidden = view !== 'list';
+  ui.viewMissing.hidden = view !== 'missing';
+  ui.headerShare.hidden = view !== 'list';
+
+  if (view === 'list') {
+    document.title = 'Ma liste de courses';
+  } else if (view === 'home') {
+    document.title = 'Ma liste de courses';
+  } else {
+    document.title = 'Liste introuvable — Ma liste de courses';
+  }
+}
+
+function pathForList(id) {
+  return `/l/${id}`;
+}
+
+function goTo(path, { replace = false } = {}) {
+  if (replace) window.history.replaceState({}, '', path);
+  else window.history.pushState({}, '', path);
+  route();
+}
+
+async function createList() {
+  if (state.adding) return;
+  state.adding = true;
+  ui.createBtn.disabled = true;
+  ui.createBtn.querySelector('span').textContent = 'Création…';
+  try {
+    const { list } = await api('/api/lists', { method: 'POST', body: '{}' });
+    rememberList(list.id);
+    state.list = list;
+    goTo(pathForList(list.id));
+  } catch (error) {
+    showToast(error.message, {
+      error: true,
+      action: { label: 'Réessayer', onClick: createList },
+    });
+  } finally {
+    state.adding = false;
+    ui.createBtn.disabled = false;
+    ui.createBtn.querySelector('span').textContent = 'Créer une liste';
+  }
+}
+
+function rememberList(id) {
+  try {
+    localStorage.setItem(LAST_LIST_KEY, id);
+  } catch { /* mode privé : on ignore */ }
+}
+
+function lastList() {
+  try {
+    return localStorage.getItem(LAST_LIST_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chargement d’une liste                                              */
+/* ------------------------------------------------------------------ */
+
+async function loadList(id) {
+  stopRealtime();
+  state.listId = id;
+  state.list = { id, revision: 0, items: [] };
+  showView('list');
+  renderItems();
+  setSync(null, 'Connexion…');
+
+  try {
+    const { list } = await api(`/api/lists/${encodeURIComponent(id)}`);
+    rememberList(id);
+    applyList(list);
+    startRealtime(id);
+    checkStorageMode();
+  } catch (error) {
+    if (error.status === 404) {
+      showView('missing');
+      return;
+    }
+    setSync('error', 'Liste indisponible');
+    showToast(error.message, {
+      error: true,
+      action: { label: 'Réessayer', onClick: () => loadList(id) },
+    });
+  }
+}
+
+async function checkStorageMode() {
+  if (state.dbOnline !== null) return;
+  try {
+    const health = await api('/api/health');
+    state.dbOnline = Boolean(health.databaseConfigured);
+    if (!state.dbOnline) {
+      ui.bannerTitle.textContent = 'Aperçu : base de données non connectée';
+      ui.bannerText.textContent =
+        'Les listes sont enregistrées sur ce serveur d’aperçu (fichier local), pas dans PostgreSQL. ' +
+        'Le partage fonctionne entre deux navigateurs ouverts sur ce serveur, mais les données peuvent ' +
+        'être perdues au redémarrage. Après déploiement sur Railway avec DATABASE_URL, le partage et la ' +
+        'conservation des listes sont durables.';
+      ui.banner.hidden = state.bannerDismissed;
+    } else {
+      ui.banner.hidden = true;
+    }
+  } catch {
+    state.dbOnline = null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Temps réel                                                          */
+/* ------------------------------------------------------------------ */
+
+function stopRealtime() {
+  if (state.source) {
+    state.source.close();
+    state.source = null;
+  }
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+function startRealtime(id) {
+  stopRealtime();
+
+  if (typeof window.EventSource === 'function') {
+    const source = new EventSource(`/api/lists/${encodeURIComponent(id)}/events`);
+    state.source = source;
+
+    source.addEventListener('open', () => {
+      setSync('live', 'Synchronisé · les autres appareils voient la liste en direct');
+      stopPolling();
+    });
+
+    source.addEventListener('list', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data && data.list) {
+          applyList(data.list);
+          setSync('live', 'Synchronisé · les autres appareils voient la liste en direct');
+        }
+      } catch { /* ignore */ }
+    });
+
+    source.addEventListener('error', () => {
+      // EventSource retente tout seul ; on affiche l’état et on active un secours
+      setSync('offline', 'Reconnexion en cours…');
+      startPolling(id);
+    });
+  } else {
+    startPolling(id);
+  }
+
+  document.addEventListener('visibilitychange', onVisibility);
+}
+
+function startPolling(id) {
+  if (state.pollTimer) return;
+  state.pollTimer = setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const { list } = await api(`/api/lists/${encodeURIComponent(id)}`);
+      applyList(list);
+      if (!state.source || state.source.readyState === 2) {
+        setSync('live', 'Synchronisé');
+      }
+    } catch {
+      setSync('offline', 'Hors connexion — nouvelle tentative…');
+    }
+  }, 6000);
+}
+
+function stopPolling() {
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+async function onVisibility() {
+  if (document.hidden || !state.listId) return;
+  try {
+    const { list } = await api(`/api/lists/${encodeURIComponent(state.listId)}`);
+    applyList(list);
+    if (state.source && state.source.readyState === 2) startRealtime(state.listId);
+  } catch { /* silencieux */ }
+}
+
+/* ------------------------------------------------------------------ */
+/* Mutations optimistes                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Applique une modification localement, puis l’envoie au serveur.
+ * En cas d’échec : retour à l’état précédent + message clair + « Réessayer ».
+ */
+async function mutate({ applyLocally, request, errorMessage }) {
+  const previous = clone(state.list);
+  const optimistic = clone(state.list);
+  applyLocally(optimistic);
+  state.list = optimistic;
+  renderItems();
+
+  try {
+    const result = await request();
+    if (result && result.list) applyList(result.list);
+    return true;
+  } catch (error) {
+    state.list = previous;
+    renderItems();
+    showToast(error.message || errorMessage, {
+      error: true,
+      action: { label: 'Réessayer', onClick: () => mutate({ applyLocally, request, errorMessage }) },
+    });
+    if (error.status === 404) loadList(state.listId);
+    return false;
+  }
+}
+
+function itemPath(itemId) {
+  return `/api/lists/${encodeURIComponent(state.listId)}/items/${encodeURIComponent(itemId)}`;
+}
+
+function findItem(id) {
+  return (state.list.items || []).find((item) => item.id === id);
+}
+
+async function addItem(event) {
+  if (event) event.preventDefault();
+  if (!state.listId) return;
+
+  const rawName = ui.nameInput.value.trim();
+  const quantity = ui.qtyInput.value.trim();
+
+  // « Pommes · 4 » saisi d’un coup : le nom et la quantité sont séparés
+  let name = rawName;
+  let qty = quantity;
+  const split = rawName.match(/^(.*?)\s*[·•]\s*([^·•]{1,40})$/);
+  if (split && split[1].trim()) {
+    name = split[1].trim();
+    qty = qty || split[2].trim();
+  }
+
+  if (!name) {
+    ui.addError.textContent = 'Écris le nom d’un article avant d’appuyer sur Ajouter.';
+    ui.addError.hidden = false;
+    ui.nameInput.setAttribute('aria-invalid', 'true');
+    ui.nameInput.focus();
+    return;
+  }
+
+  hideAddError();
+
+  const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const optimisticItem = {
+    id: tempId,
+    name,
+    quantity: qty,
+    done: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  ui.nameInput.value = '';
+  ui.qtyInput.value = '';
+
+  await mutate({
+    applyLocally: (list) => {
+      list.items.push(optimisticItem);
+      list.revision += 1;
+    },
+    request: () =>
+      api(`/api/lists/${encodeURIComponent(state.listId)}/items`, {
+        method: 'POST',
+        body: JSON.stringify({ name, quantity: qty }),
+      }),
+    errorMessage: 'Impossible d’ajouter l’article. Vérifie ta connexion puis réessaie.',
+  });
+
+  ui.nameInput.focus({ preventScroll: true });
+}
+
+function hideAddError() {
+  ui.addError.hidden = true;
+  ui.addError.textContent = '';
+  ui.nameInput.removeAttribute('aria-invalid');
+}
+
+function toggleItem(itemId) {
+  const item = findItem(itemId);
+  if (!item) return;
+  const nextDone = !item.done;
+
+  mutate({
+    applyLocally: (list) => {
+      const target = list.items.find((it) => it.id === itemId);
+      if (target) target.done = nextDone;
+      list.revision += 1;
+    },
+    request: () =>
+      api(itemPath(itemId), {
+        method: 'PATCH',
+        body: JSON.stringify({ done: nextDone }),
+      }),
+    errorMessage: nextDone
+      ? 'Impossible de cocher l’article. Réessaie.'
+      : 'Impossible de décocher l’article. Réessaie.',
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Feuille d’édition                                                   */
+/* ------------------------------------------------------------------ */
+
+function openEdit(itemId) {
+  const item = findItem(itemId);
+  if (!item) return;
+  state.editing = item;
+  ui.editName.value = item.name;
+  ui.editQty.value = item.quantity || '';
+  ui.editError.hidden = true;
+  ui.deleteConfirm.hidden = true;
+  ui.editDelete.hidden = false;
+  ui.editForm.querySelector('.sheet-actions').hidden = false;
+  ui.editDialog.showModal();
+  setTimeout(() => ui.editName.focus({ preventScroll: true }), 60);
+}
+
+function closeEdit() {
+  state.editing = null;
+  ui.editDialog.close();
+}
+
+async function saveEdit(event) {
+  if (event) event.preventDefault();
+  const item = state.editing;
+  if (!item) return;
+
+  const name = ui.editName.value.trim();
+  const quantity = ui.editQty.value.trim();
+  if (!name) {
+    ui.editError.textContent = 'Le nom de l’article ne peut pas être vide.';
+    ui.editError.hidden = false;
+    ui.editName.focus();
+    return;
+  }
+
+  ui.editError.hidden = true;
+  closeEdit();
+
+  await mutate({
+    applyLocally: (list) => {
+      const target = list.items.find((it) => it.id === item.id);
+      if (target) {
+        target.name = name;
+        target.quantity = quantity;
+      }
+      list.revision += 1;
+    },
+    request: () =>
+      api(itemPath(item.id), {
+        method: 'PATCH',
+        body: JSON.stringify({ name, quantity }),
+      }),
+    errorMessage: 'Impossible d’enregistrer la modification. Réessaie.',
+  });
+}
+
+async function deleteItem() {
+  const item = state.editing;
+  if (!item) return;
+  closeEdit();
+
+  await mutate({
+    applyLocally: (list) => {
+      list.items = list.items.filter((it) => it.id !== item.id);
+      list.revision += 1;
+    },
+    request: () => api(itemPath(item.id), { method: 'DELETE' }),
+    errorMessage: 'Impossible de supprimer l’article. Réessaie.',
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Lien de partage                                                     */
+/* ------------------------------------------------------------------ */
+
+async function copyLink() {
+  if (!state.listId) return;
+  const url = `${window.location.origin}${pathForList(state.listId)}`;
+
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const area = document.createElement('textarea');
+      area.value = url;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.top = '-1000px';
+      document.body.appendChild(area);
+      area.select();
+      area.setSelectionRange(0, url.length);
+      document.execCommand('copy');
+      area.remove();
+    }
+    showToast('Lien copié');
+  } catch {
+    showToast(`Copie impossible. Voici le lien à partager : ${url}`, { duration: 9000 });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Écouteurs                                                           */
+/* ------------------------------------------------------------------ */
+
+ui.createBtn.addEventListener('click', createList);
+
+ui.resumeBtn.addEventListener('click', () => {
+  const id = lastList();
+  if (id) goTo(pathForList(id));
+});
+
+ui.addForm.addEventListener('submit', addItem);
+ui.nameInput.addEventListener('input', () => {
+  if (ui.nameInput.getAttribute('aria-invalid') === 'true') hideAddError();
+});
+
+// Entrée depuis le champ quantité déclenche aussi l’ajout
+ui.qtyInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    addItem();
+  }
+});
+
+ui.copyBtn.addEventListener('click', copyLink);
+ui.headerShare.addEventListener('click', copyLink);
+ui.brandLink.addEventListener('click', (event) => {
+  event.preventDefault();
+  goTo('/');
+});
+
+function handleListClick(event) {
+  const button = event.target.closest('[data-action]');
+  if (!button) return;
+  const row = button.closest('.item');
+  if (!row) return;
+  if (button.dataset.action === 'toggle') toggleItem(row.dataset.id);
+  else openEdit(row.dataset.id);
+}
+ui.todoList.addEventListener('click', handleListClick);
+ui.doneList.addEventListener('click', handleListClick);
+
+ui.editForm.addEventListener('submit', saveEdit);
+ui.editCancel.addEventListener('click', closeEdit);
+ui.editDelete.addEventListener('click', () => {
+  const item = state.editing;
+  ui.deleteQuestion.textContent = item ? `Supprimer « ${item.name} » ?` : 'Supprimer cet article ?';
+  ui.deleteConfirm.hidden = false;
+  ui.editDelete.hidden = true;
+  ui.editForm.querySelector('.sheet-actions').hidden = true;
+  ui.confirmDelete.focus();
+});
+ui.cancelDelete.addEventListener('click', () => {
+  ui.deleteConfirm.hidden = true;
+  ui.editDelete.hidden = false;
+  ui.editForm.querySelector('.sheet-actions').hidden = false;
+});
+ui.confirmDelete.addEventListener('click', deleteItem);
+
+// Fermeture de la feuille : clic sur le fond ou touche Échap
+ui.editDialog.addEventListener('click', (event) => {
+  if (event.target === ui.editDialog) closeEdit();
+});
+ui.editDialog.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  closeEdit();
+});
+
+ui.bannerClose.addEventListener('click', () => {
+  state.bannerDismissed = true;
+  ui.banner.hidden = true;
+});
+ui.bannerDetailsBtn.addEventListener('click', () => {
+  ui.bannerDetails.hidden = !ui.bannerDetails.hidden;
+  ui.bannerDetailsBtn.textContent = ui.bannerDetails.hidden
+    ? 'Voir comment activer le partage durable'
+    : 'Masquer les détails';
+});
+
+window.addEventListener('popstate', route);
+window.addEventListener('online', () => {
+  if (state.listId) onVisibility();
+});
+window.addEventListener('offline', () => setSync('offline', 'Hors connexion — les modifications seront à réessayer'));
+
+/* ------------------------------------------------------------------ */
+/* Démarrage                                                           */
+/* ------------------------------------------------------------------ */
+
+function route() {
+  hideToast();
+  const match = window.location.pathname.match(/^\/l\/([A-Za-z0-9_-]{4,64})\/?$/);
+
+  if (match) {
+    const id = match[1];
+    if (state.listId === id && state.view === 'list') return;
+    loadList(id);
+    return;
+  }
+
+  if (window.location.pathname === '/' || window.location.pathname === '') {
+    stopRealtime();
+    state.listId = null;
+    refreshHome();
+    showView('home');
+    return;
+  }
+
+  showView('missing');
+}
+
+function refreshHome() {
+  const id = lastList();
+  ui.resumeBtn.hidden = !id;
+  if (id) {
+    ui.resumeName.textContent = `Lien …${id.slice(-6)}`;
+    api(`/api/lists/${encodeURIComponent(id)}`)
+      .then(({ list }) => {
+        const todo = list.items.filter((item) => !item.done).length;
+        const done = list.items.length - todo;
+        ui.resumeName.textContent = list.items.length
+          ? `${todo} à acheter · ${done} acheté${done > 1 ? 's' : ''}`
+          : 'Liste vide';
+      })
+      .catch(() => {
+        ui.resumeBtn.hidden = true;
+      });
+  }
+}
+
+route();

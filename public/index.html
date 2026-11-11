@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f7f4">
+  <meta name="description" content="Une liste de courses partagée, sans compte. Ajoute, coche, partage le lien — tout le monde voit la même liste en direct.">
+  <title>Ma liste de courses</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23157f4b'/%3E%3Cpath d='M18 33l9 9 19-20' fill='none' stroke='white' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Aller au contenu</a>
+
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="/" id="brandLink" aria-label="Ma liste de courses — accueil">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h2l1.5 9.5a2 2 0 0 0 2 1.7h7.2a2 2 0 0 0 2-1.6L20 9H7"/><circle cx="10" cy="20" r="1.2" fill="currentColor" stroke="none"/><circle cx="17" cy="20" r="1.2" fill="currentColor" stroke="none"/></svg>
+        </span>
+        <span class="brand-text">Ma liste de courses</span>
+      </a>
+      <button type="button" class="btn btn-share-head" id="headerShare" hidden>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
+        Partager
+      </button>
+    </header>
+
+    <main id="main">
+
+      <!-- ============================ ACCUEIL ============================ -->
+      <section id="viewHome" class="view" hidden>
+        <div class="hero">
+          <p class="eyebrow">Sans compte, sans installation</p>
+          <h1>La liste de courses<br>à partager en un lien</h1>
+          <p class="lede">Crée une liste, envoie le lien à qui tu veux&nbsp;: chacun ajoute, coche et supprime les articles. Les deux téléphones restent synchronisés.</p>
+        </div>
+
+        <button type="button" class="btn btn-primary btn-xl" id="createBtn">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Créer une liste</span>
+        </button>
+
+        <button type="button" class="btn btn-ghost" id="resumeBtn" hidden>
+          Reprendre ma dernière liste
+          <span class="resume-name" id="resumeName"></span>
+        </button>
+
+        <ol class="steps">
+          <li><span class="step-num">1</span><div><strong>Crée la liste</strong><p>Elle s’ouvre tout de suite, vide.</p></div></li>
+          <li><span class="step-num">2</span><div><strong>Ajoute tes articles</strong><p>« Lait », « Pommes · 4 »… avec la quantité si besoin.</p></div></li>
+          <li><span class="step-num">3</span><div><strong>Partage le lien</strong><p>La personne qui l’ouvre arrive sur la même liste.</p></div></li>
+        </ol>
+
+        <p class="footnote">Pas de compte, pas de mot de passe. Toute personne ayant le lien peut modifier la liste&nbsp;: partage-le uniquement avec les personnes concernées.</p>
+      </section>
+
+      <!-- ============================ LISTE ============================ -->
+      <section id="viewList" class="view" hidden>
+        <div class="banner" id="storageBanner" hidden role="status">
+          <div class="banner-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          </div>
+          <div class="banner-body">
+            <p class="banner-title" id="storageBannerTitle">Aperçu sans base de données</p>
+            <p class="banner-text" id="storageBannerText"></p>
+            <button type="button" class="link-btn" id="storageDetailsBtn">Voir comment activer le partage durable</button>
+            <div class="banner-details" id="storageDetails" hidden>
+              <p>Sur Railway&nbsp;: ajoute un service <strong>PostgreSQL</strong>, puis dans les variables de ton application crée <code>DATABASE_URL</code> = <code>${{Postgres.DATABASE_URL}}</code>, et redéploie. Les listes sont alors enregistrées dans la base et le partage fonctionne pour de bon (voir <code>README.md</code>).</p>
+            </div>
+          </div>
+          <button type="button" class="banner-close" id="storageBannerClose" aria-label="Masquer l’avertissement">×</button>
+        </div>
+
+        <form id="addForm" class="addcard" autocomplete="off" novalidate>
+          <label class="field field-main">
+            <span class="sr-only">Ajouter un article</span>
+            <input id="nameInput" name="name" type="text" placeholder="Ajouter un article"
+                   maxlength="120" enterkeyhint="done" autocapitalize="sentences"
+                   spellcheck="false" aria-describedby="addError">
+          </label>
+          <div class="add-row">
+            <label class="field field-qty">
+              <span class="sr-only">Quantité (facultatif)</span>
+              <input id="qtyInput" name="quantity" type="text" placeholder="Quantité (ex. 2 bouteilles)"
+                     maxlength="40" enterkeyhint="done" autocapitalize="sentences" spellcheck="false">
+            </label>
+            <button type="submit" class="btn btn-primary btn-add" id="addBtn">Ajouter</button>
+          </div>
+          <p class="field-error" id="addError" hidden></p>
+        </form>
+
+        <div class="share-hint">
+          <button type="button" class="btn btn-outline btn-copy" id="copyBtn">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3H6.5A2.5 2.5 0 0 0 4 5.5v6A2.5 2.5 0 0 0 6.5 14"/></svg>
+            Copier le lien de partage
+          </button>
+          <p class="hint">Toute personne avec ce lien voit et modifie la même liste.</p>
+        </div>
+
+        <div class="sync" id="syncState" aria-live="polite">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="syncText">Connexion…</span>
+        </div>
+
+        <section class="group" aria-labelledby="todoTitle">
+          <h2 id="todoTitle" class="group-title">
+            À acheter <span class="count" id="todoCount">0</span>
+          </h2>
+          <ul class="items" id="todoList"></ul>
+          <div class="empty" id="emptyState" hidden>
+            <div class="empty-illustration" aria-hidden="true">
+              <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="10" width="32" height="30" rx="5"/><path d="M16 6v8M32 6v8M8 19h32"/><path d="M17 27h6"/></svg>
+            </div>
+            <p class="empty-title">Ajoute ton premier article</p>
+            <p class="empty-sub">Écris un article en haut de l’écran, puis appuie sur Ajouter.</p>
+          </div>
+        </section>
+
+        <section class="group group-done" aria-labelledby="doneTitle">
+          <h2 id="doneTitle" class="group-title">
+            Achetés <span class="count" id="doneCount">0</span>
+          </h2>
+          <ul class="items items-done" id="doneList"></ul>
+          <p class="empty-line" id="doneEmpty">Les articles cochés apparaissent ici.</p>
+        </section>
+
+        <p class="device-note">Cette liste est liée à ton lien de partage. Rouvre ce lien plus tard pour la retrouver dans son dernier état.</p>
+      </section>
+
+      <!-- ============================ INTROUVABLE ============================ -->
+      <section id="viewMissing" class="view view-center" hidden>
+        <div class="missing-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        </div>
+        <h1 class="missing-title">Cette liste est introuvable</h1>
+        <p class="missing-text">Le lien est peut-être incomplet, ou la liste n’existe plus. Demande le lien à la personne qui l’a créée.</p>
+        <a class="btn btn-primary" href="/">Retour à l’accueil</a>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Toast d’information / erreur avec action « Réessayer » -->
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden>
+    <span class="toast-text" id="toastText"></span>
+    <button type="button" class="toast-action" id="toastAction" hidden>Réessayer</button>
+  </div>
+
+  <!-- Feuille de modification d’un article -->
+  <dialog id="editDialog" class="sheet" aria-labelledby="editTitle">
+    <form method="dialog" class="sheet-inner" id="editForm" autocomplete="off">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <h2 class="sheet-title" id="editTitle">Modifier l’article</h2>
+
+      <label class="field">
+        <span class="field-label">Article</span>
+        <input type="text" id="editName" maxlength="120" autocapitalize="sentences" spellcheck="false" required>
+      </label>
+      <label class="field">
+        <span class="field-label">Quantité <span class="opt">(facultatif)</span></span>
+        <input type="text" id="editQty" maxlength="40" placeholder="ex. 2 bouteilles, 500 g" autocapitalize="sentences" spellcheck="false">
+      </label>
+
+      <p class="field-error" id="editError" hidden></p>
+
+      <div class="sheet-actions">
+        <button type="submit" class="btn btn-primary" id="editSave" value="save">Enregistrer</button>
+        <button type="button" class="btn btn-ghost" id="editCancel">Annuler</button>
+      </div>
+      <button type="button" class="btn btn-danger-ghost" id="editDelete">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"/><path d="M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"/></svg>
+        Supprimer l’article
+      </button>
+
+      <div class="confirm" id="deleteConfirm" hidden>
+        <p id="deleteQuestion">Supprimer cet article&nbsp;?</p>
+        <div class="confirm-actions">
+          <button type="button" class="btn btn-danger" id="confirmDelete">Supprimer</button>
+          <button type="button" class="btn btn-ghost" id="cancelDelete">Garder</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
