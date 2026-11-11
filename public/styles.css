@@ -474,8 +474,16 @@ a { color: var(--accent); }
   .field-main input { padding-right: 42px; }
 }
 
-.add-row { display: flex; gap: 8px; }
-.field-qty { flex: 1; min-width: 0; }
+.add-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+@media (min-width: 480px) {
+  .add-row { grid-template-columns: 116px minmax(0, 1fr) auto; }
+}
+.field-qty { min-width: 0; }
 .field-qty input {
   width: 100%;
   min-height: var(--tap);
@@ -500,9 +508,50 @@ input[aria-invalid="true"] {
 }
 
 .btn-add {
-  flex: none;
   min-height: var(--tap);
-  padding: 0 20px;
+  padding: 0 18px;
+}
+@media (max-width: 380px) {
+  .add-row { grid-template-columns: 64px minmax(0, 1fr) auto; }
+  .cat-chip { padding: 0 8px; font-size: 13px; gap: 4px; }
+  .cat-chip > svg:first-child { display: none; }
+  .btn-add { padding: 0 12px; font-size: 15px; }
+}
+
+/* Sélecteur de catégorie (repas, rayon…) */
+.cat-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: var(--tap);
+  padding: 0 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  touch-action: manipulation;
+}
+.cat-chip:hover { border-color: var(--accent); color: var(--accent-strong); }
+.cat-chip > svg { flex: none; }
+.cat-chip-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.cat-chip-chevron { flex: none; opacity: 0.65; }
+.cat-chip.is-set {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .field-error {
@@ -730,6 +779,88 @@ input[aria-invalid="true"] {
 .item-check:focus-visible,
 .item-main:focus-visible,
 .item-edit:focus-visible { outline-offset: -3px; border-radius: 10px; }
+
+/* --------------------------- Sous-catégories ------------------------------ */
+
+.cat-group { display: grid; gap: 8px; }
+.cat-group-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 4px 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.cat-group-title > svg { color: var(--accent); flex: none; }
+.cat-group-title .count { flex: none; }
+.cat-group-title .cat-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-group-title.is-empty { color: var(--ink-3); font-style: italic; text-transform: none; letter-spacing: 0.02em; font-size: 13px; }
+.cat-group-title.is-empty > svg { color: var(--ink-3); }
+.cat-group-items { display: grid; gap: 8px; }
+
+/* Choix dans la feuille de catégorie */
+.sheet-sub {
+  margin: -6px 0 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  max-width: 40ch;
+}
+.cat-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.cat-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  touch-action: manipulation;
+}
+.cat-option:hover { border-color: var(--line-strong); color: var(--ink); }
+.cat-option .cat-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-option .cat-option-count {
+  flex: none;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.cat-option.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.cat-option.is-active .cat-option-count { background: var(--surface); color: var(--accent-strong); }
+.cat-option[data-category=""] { font-style: italic; }
 
 /* --------------------------------- Vides ---------------------------------- */
 

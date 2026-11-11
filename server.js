@@ -22,6 +22,7 @@ const DATA_FILE = path.join(DATA_DIR, 'store.json');
 
 const MAX_NAME = 120;
 const MAX_QTY = 40;
+const MAX_CATEGORY = 60;
 const MAX_ITEMS = 300;
 
 const app = express();
@@ -80,6 +81,7 @@ function publicList(list) {
       id: item.id,
       name: item.name,
       quantity: item.quantity || '',
+      category: item.category || '',
       done: Boolean(item.done),
       createdAt: item.created_at || item.createdAt,
       updatedAt: item.updated_at || item.updatedAt,
@@ -114,11 +116,14 @@ function createPgStore(pool) {
           list_id     TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
           name        TEXT NOT NULL,
           quantity    TEXT NOT NULL DEFAULT '',
+          category    TEXT NOT NULL DEFAULT '',
           done        BOOLEAN NOT NULL DEFAULT false,
           created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
         );
       `);
+      // Bases existantes : ajoute la colonne sans perdre les listes en cours
+      await pool.query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT '';`);
       await pool.query(`CREATE INDEX IF NOT EXISTS items_list_id_idx ON items (list_id);`);
     },
 
@@ -141,7 +146,7 @@ function createPgStore(pool) {
       return publicList({ ...rows[0], items: items.rows });
     },
 
-    async addItem(listId, { name, quantity }) {
+    async addItem(listId, { name, quantity, category = '' }) {
       const list = await pool.query('SELECT id FROM lists WHERE id = $1', [listId]);
       if (!list.rows[0]) throw httpError(404, 'Liste introuvable.');
 
@@ -149,8 +154,8 @@ function createPgStore(pool) {
       if (count.rows[0].n >= MAX_ITEMS) throw httpError(400, 'La liste est pleine (300 articles maximum).');
 
       await pool.query(
-        'INSERT INTO items (id, list_id, name, quantity) VALUES ($1, $2, $3, $4)',
-        [newId(), listId, name, quantity]
+        'INSERT INTO items (id, list_id, name, quantity, category) VALUES ($1, $2, $3, $4, $5)',
+        [newId(), listId, name, quantity, category]
       );
       return this.touch(listId);
     },
@@ -161,6 +166,7 @@ function createPgStore(pool) {
       let i = 3;
       if (patch.name !== undefined) { sets.push(`name = $${i++}`); values.push(patch.name); }
       if (patch.quantity !== undefined) { sets.push(`quantity = $${i++}`); values.push(patch.quantity); }
+      if (patch.category !== undefined) { sets.push(`category = $${i++}`); values.push(patch.category); }
       if (patch.done !== undefined) { sets.push(`done = $${i++}`); values.push(patch.done); }
       if (!sets.length) return this.getList(listId);
 
@@ -258,13 +264,14 @@ function createFileStore() {
       return list ? snapshot(list) : null;
     },
 
-    async addItem(listId, { name, quantity }) {
+    async addItem(listId, { name, quantity, category = '' }) {
       const list = find(listId);
       if (list.items.length >= MAX_ITEMS) throw httpError(400, 'La liste est pleine (300 articles maximum).');
       list.items.push({
         id: newId(),
         name,
         quantity,
+        category,
         done: false,
         created_at: nowIso(),
         updated_at: nowIso(),
@@ -278,6 +285,7 @@ function createFileStore() {
       if (!item) throw httpError(404, 'Article introuvable.');
       if (patch.name !== undefined) item.name = patch.name;
       if (patch.quantity !== undefined) item.quantity = patch.quantity;
+      if (patch.category !== undefined) item.category = patch.category;
       if (patch.done !== undefined) item.done = patch.done;
       item.updated_at = nowIso();
       return this.touch(listId);
@@ -403,7 +411,8 @@ app.post('/api/lists/:id/items', asyncRoute(async (req, res) => {
   if (!name) throw httpError(400, 'Écris le nom de l’article.');
 
   const quantity = cleanText(req.body.quantity, MAX_QTY) || cleaned.quantity;
-  const list = await store.addItem(req.params.id, { name, quantity });
+  const category = cleanText(req.body.category, MAX_CATEGORY);
+  const list = await store.addItem(req.params.id, { name, quantity, category });
   broadcast(req.params.id, list);
   res.status(201).json({ list });
 }));
@@ -417,6 +426,7 @@ app.patch('/api/lists/:id/items/:itemId', asyncRoute(async (req, res) => {
     patch.name = name;
   }
   if (body.quantity !== undefined) patch.quantity = cleanText(body.quantity, MAX_QTY);
+  if (body.category !== undefined) patch.category = cleanText(body.category, MAX_CATEGORY);
   if (body.done !== undefined) patch.done = Boolean(body.done);
   if (!Object.keys(patch).length) throw httpError(400, 'Aucune modification fournie.');
 

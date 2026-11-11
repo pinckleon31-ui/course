@@ -8,6 +8,9 @@ restent synchronisés en direct (Server-Sent Events).
 - **Ajout en haut de l’écran** : « Lait », ou « Pommes » + quantité « 4 ».
 - **Lien de partage** copié en un appui ; la personne qui l’ouvre arrive sur la même liste.
 - **Deux sections** : « À acheter » puis « Achetés » (un article coché descend, décoché il remonte).
+- **Sous-catégories** : chaque article peut être rangé sous un repas ou un rayon
+  (« Repas du lundi », « Dessert »…), créé à la volée depuis le bouton **Catégorie**.
+  Les deux sections « À acheter » et « Achetés » sont alors regroupées par catégorie.
 - **Barre de progression** : « 2 sur 5 achetés » et état de synchronisation en direct.
 - **Modification / suppression** via la feuille de détail d’un article, avec **Annuler** après suppression.
 - **Thème clair ou sombre** : bouton dans l’en-tête, choix mémorisé, mode système suivi par défaut.
@@ -49,15 +52,35 @@ aucune migration à lancer à la main.
 
 ```sql
 lists (id text pk, revision int, created_at, updated_at)
-items (id text pk, list_id → lists, name, quantity, done bool, created_at, updated_at)
+items (id text pk, list_id → lists, name, quantity, done bool,
+       category text not null default '', created_at, updated_at)
 ```
+
+La colonne `category` est ajoutée automatiquement aux bases existantes
+(`ALTER TABLE items ADD COLUMN IF NOT EXISTS category …`) : aucune migration manuelle.
 
 L’identifiant d’une liste est un jeton aléatoire de 12 octets encodé en base64url
 (16 caractères, ~96 bits d’entropie) : impossible à deviner. Le lien `/l/<jeton>` fait office
 de mot de passe : **toute personne qui possède le lien peut modifier la liste**.
 
 
-## 2. Thème clair / sombre
+## 2. Sous-catégories (repas, rayons…)
+
+Pour une liste organisée « par repas », chaque article possède une catégorie libre
+(60 caractères maximum).
+
+- Le bouton **Catégorie** du formulaire d’ajout ouvre une feuille qui liste les catégories
+  déjà utilisées, avec le nombre d’articles de chacune, et permet d’en saisir une nouvelle.
+- La catégorie choisie reste active pour les articles suivants : on enchaîne les ajouts du
+  même repas. Elle est mémorisée par liste dans le navigateur (`mlc:category:<id>`).
+- Dès qu’au moins un article est classé, « À acheter » et « Achetés » sont découpés en
+  sous-groupes ; les articles non classés apparaissent en tête sous « Sans catégorie ».
+- La feuille d’édition d’un article permet de changer sa catégorie (champ avec suggestions).
+- Une catégorie disparaît d’elle-même quand elle ne contient plus d’article.
+- Les noms sont comparés sans tenir compte de la casse : « repas du lundi » réutilise
+  « Repas du lundi » existant.
+
+## 3. Thème clair / sombre
 
 L’interface utilise deux jeux de variables CSS (`:root` pour le clair, `:root[data-theme="dark"]`
 pour le sombre) : fonds, surfaces, bordures, texte et couleur d’accent sont tous dérivés de jetons,
@@ -71,7 +94,7 @@ avec une couleur d’accent unique par thème (vert profond en clair, vert menth
 
 ---
 
-## 3. Lancer en local
+## 4. Lancer en local
 
 ```bash
 npm install
@@ -98,9 +121,9 @@ npm start
 
 ---
 
-## 4. Déployer sur Railway — pas à pas
+## 5. Déployer sur Railway — pas à pas
 
-### 4.1 Mettre le code sur GitHub
+### 5.1 Mettre le code sur GitHub
 
 ```bash
 git add .
@@ -108,20 +131,20 @@ git commit -m "Ma liste de courses"
 git push origin main
 ```
 
-### 4.2 Créer le projet et l’application
+### 5.2 Créer le projet et l’application
 
 1. Connectez-vous sur [railway.app](https://railway.app) → **New Project**.
 2. **Deploy from GitHub repo** → choisissez ce dépôt.
 3. Railway détecte le `Dockerfile` et lance le build. (Sinon : **Settings → Build →
    Builder = Dockerfile**, et **Deploy → Start Command = `node server.js`**.)
 
-### 4.3 Créer la base de données
+### 5.3 Créer la base de données
 
 1. Dans le projet : **New → Database → Add PostgreSQL**.
    Railway crée un service `Postgres` avec sa propre variable `DATABASE_URL`.
 2. Attendez que le service soit en état **Active**.
 
-### 4.4 Configurer les variables d’environnement
+### 5.4 Configurer les variables d’environnement
 
 Ouvrez le service de **l’application** (pas la base) → onglet **Variables** → **New Variable** :
 
@@ -146,7 +169,7 @@ attend la base (jusqu’à 5 tentatives) et crée les tables. Les logs affichent
 [store] PostgreSQL connecté — partage actif entre les appareils.
 ```
 
-### 4.5 Obtenir l’adresse publique
+### 5.5 Obtenir l’adresse publique
 
 1. Service application → **Settings → Networking → Public Networking → Generate Domain**.
 2. Railway fournit une URL du type `https://ma-liste-production.up.railway.app`.
@@ -154,7 +177,7 @@ attend la base (jusqu’à 5 tentatives) et crée les tables. Les logs affichent
 3. Vérifiez la santé du service : `https://<votre-domaine>/api/health` doit renvoyer
    `"databaseConfigured": true`.
 
-### 4.6 Vérifier le partage
+### 5.6 Vérifier le partage
 
 Sur un premier téléphone : ouvrez `https://<votre-domaine>/`, **Créer une liste**, ajoutez
 « Pommes » quantité « 4 », **Copier le lien de partage**.
@@ -164,7 +187,7 @@ la liste est dans son dernier état, base PostgreSQL à l’appui.
 
 ---
 
-## 5. Aperçu Arena : ce qui marche, ce qui ne marche pas
+## 6. Aperçu Arena : ce qui marche, ce qui ne marche pas
 
 L’aperçu Arena exécute l’application **sans accès à une base PostgreSQL**. Dans ce cas :
 
@@ -176,30 +199,30 @@ L’aperçu Arena exécute l’application **sans accès à une base PostgreSQL*
 - `GET /api/health` renvoie `"storage": "file"` et le message d’explication.
 
 **Aucun code n’est à modifier** pour activer le partage durable : dès que la variable
-`DATABASE_URL` est présente (étape 4.4), le serveur bascule automatiquement sur PostgreSQL,
+`DATABASE_URL` est présente (étape 5.4), le serveur bascule automatiquement sur PostgreSQL,
 crée les tables et affiche « Synchronisé ». Le bandeau d’avertissement disparaît de lui-même.
 
 ---
 
-## 6. API (si vous voulez brancher un autre client)
+## 7. API (si vous voulez brancher un autre client)
 
 | Méthode | Route | Corps | Effet |
 |---|---|---|---|
 | `POST` | `/api/lists` | — | Crée une liste, renvoie `{ list }` avec son `id` secret |
 | `GET` | `/api/lists/:id` | — | Liste complète + `revision` |
 | `GET` | `/api/lists/:id/events` | — | Flux SSE : événements `list` à chaque modification |
-| `POST` | `/api/lists/:id/items` | `{ "name": "Pommes", "quantity": "4" }` | Ajoute un article |
-| `PATCH` | `/api/lists/:id/items/:itemId` | `{ "name"?, "quantity"?, "done"? }` | Modifie / coche / décoche |
+| `POST` | `/api/lists/:id/items` | `{ "name": "Pommes", "quantity": "4", "category": "Repas du lundi" }` | Ajoute un article |
+| `PATCH` | `/api/lists/:id/items/:itemId` | `{ "name"?, "quantity"?, "category"?, "done"? }` | Modifie / coche / décoche |
 | `DELETE` | `/api/lists/:id/items/:itemId` | — | Supprime |
 | `GET` | `/api/health` | — | État du service et mode de stockage |
 
 Chaque réponse contient la liste à jour (`revision` incrémentée), ce qui permet aux clients de
-recaler leur affichage. Limites : 120 caractères pour le nom, 40 pour la quantité, 300 articles
-par liste.
+recaler leur affichage. Limites : 120 caractères pour le nom, 40 pour la quantité, 60 pour la catégorie,
+300 articles par liste.
 
 ---
 
-## 7. Dépannage
+## 8. Dépannage
 
 | Symptôme | Cause probable | Solution |
 |---|---|---|
@@ -212,7 +235,7 @@ par liste.
 
 ---
 
-## 8. Sécurité et vie privée
+## 9. Sécurité et vie privée
 
 - Pas de compte, pas de cookie de suivi, pas de service tiers : tout est stocké dans votre base.
 - Le lien est un jeton aléatoire non énumérable ; il n’est jamais indexé ni exposé par une route

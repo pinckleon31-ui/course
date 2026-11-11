@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f7f4">
-  <meta name="description" content="Une liste de courses partagée, sans compte. Ajoute, coche, partage le lien — tout le monde voit la même liste en direct.">
+  <meta name="description" content="Une liste de courses partagée, sans compte, à classer par repas. Ajoute, coche, partage le lien — tout le monde voit la même liste en direct.">
   <title>Ma liste de courses</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23157f4b'/%3E%3Cpath d='M18 33l9 9 19-20' fill='none' stroke='white' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <script>
@@ -70,7 +70,7 @@
 
         <ol class="steps">
           <li><span class="step-num">1</span><div><strong>Crée la liste</strong><p>Elle s’ouvre tout de suite, vide.</p></div></li>
-          <li><span class="step-num">2</span><div><strong>Ajoute tes articles</strong><p>« Lait », « Pommes · 4 »… avec la quantité si besoin.</p></div></li>
+          <li><span class="step-num">2</span><div><strong>Ajoute tes articles</strong><p>« Lait », « Pommes · 4 »… avec la quantité, et range-les par repas si tu veux.</p></div></li>
           <li><span class="step-num">3</span><div><strong>Partage le lien</strong><p>La personne qui l’ouvre arrive sur la même liste.</p></div></li>
         </ol>
 
@@ -105,9 +105,15 @@
           <div class="add-row">
             <label class="field field-qty">
               <span class="sr-only">Quantité (facultatif)</span>
-              <input id="qtyInput" name="quantity" type="text" placeholder="Quantité (ex. 2 bouteilles)"
-                     maxlength="40" enterkeyhint="done" autocapitalize="sentences" spellcheck="false">
+              <input id="qtyInput" name="quantity" type="text" placeholder="Qté"
+                     maxlength="40" enterkeyhint="done" autocapitalize="sentences" spellcheck="false"
+                     aria-label="Quantité (facultatif)">
             </label>
+            <button type="button" class="cat-chip" id="catBtn" aria-haspopup="dialog" aria-controls="catDialog" title="Choisir une catégorie">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3.2a2 2 0 0 1 1.4.6l7 7a2.5 2.5 0 0 1 0 3.5l-2.6 2.6a2.5 2.5 0 0 1-3.5 0l-7-7A2 2 0 0 1 4 10.2Z"/><circle cx="8" cy="9" r="1.3" fill="currentColor" stroke="none"/></svg>
+              <span class="cat-chip-label" id="catBtnLabel">Catégorie</span>
+              <svg class="cat-chip-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
             <button type="submit" class="btn btn-primary btn-add" id="addBtn">Ajouter</button>
           </div>
           <p class="field-error" id="addError" hidden></p>
@@ -145,7 +151,7 @@
               <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="10" width="32" height="30" rx="5"/><path d="M16 6v8M32 6v8M8 19h32"/><path d="M17 27h6"/></svg>
             </div>
             <p class="empty-title">Ajoute ton premier article</p>
-            <p class="empty-sub">Écris un article dans le champ en haut de l’écran, puis appuie sur Ajouter.</p>
+            <p class="empty-sub">Écris un article en haut de l’écran, puis appuie sur Ajouter. Le bouton <strong>Catégorie</strong> permet de le ranger sous un repas.</p>
             <button type="button" class="btn btn-outline empty-cta" id="emptyCta">Écrire un article</button>
           </div>
         </section>
@@ -194,6 +200,11 @@
         <span class="field-label">Quantité <span class="opt">(facultatif)</span></span>
         <input type="text" id="editQty" maxlength="40" placeholder="ex. 2 bouteilles, 500 g" autocapitalize="sentences" spellcheck="false">
       </label>
+      <label class="field">
+        <span class="field-label">Catégorie <span class="opt">(facultatif)</span></span>
+        <input type="text" id="editCategory" list="categorySuggestions" maxlength="60" placeholder="ex. Repas du lundi, Dessert" autocapitalize="sentences" spellcheck="false">
+      </label>
+      <datalist id="categorySuggestions"></datalist>
 
       <p class="field-error" id="editError" hidden></p>
 
@@ -213,6 +224,30 @@
           <button type="button" class="btn btn-ghost" id="cancelDelete">Garder</button>
         </div>
       </div>
+    </form>
+  </dialog>
+
+
+  <!-- Choix de la sous-catégorie (repas, rayon…) -->
+  <dialog id="catDialog" class="sheet" aria-labelledby="catTitle">
+    <form method="dialog" class="sheet-inner" id="catForm" autocomplete="off">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <h2 class="sheet-title" id="catTitle">Classer les prochains articles</h2>
+      <p class="sheet-sub">Choisis un repas ou un rayon : les articles ajoutés seront rangés dessous.</p>
+
+      <div class="cat-options" id="catOptions" role="group" aria-label="Catégories disponibles"></div>
+
+      <label class="field">
+        <span class="field-label">Nouvelle catégorie</span>
+        <input type="text" id="newCatInput" maxlength="60" placeholder="ex. Repas du lundi, Dessert, Pharmacie"
+               autocapitalize="sentences" spellcheck="false" enterkeyhint="done">
+      </label>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-primary" id="createCatBtn">Créer et utiliser</button>
+        <button type="button" class="btn btn-ghost" id="closeCatBtn">Fermer</button>
+      </div>
+      <p class="field-error" id="catError" hidden></p>
     </form>
   </dialog>
 

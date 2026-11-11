@@ -31,6 +31,8 @@ const ui = {
   qtyInput: el('qtyInput'),
   addBtn: el('addBtn'),
   addError: el('addError'),
+  catBtn: el('catBtn'),
+  catBtnLabel: el('catBtnLabel'),
 
   copyBtn: el('copyBtn'),
   copyLabel: el('copyLabel'),
@@ -68,6 +70,8 @@ const ui = {
   editForm: el('editForm'),
   editName: el('editName'),
   editQty: el('editQty'),
+  editCategory: el('editCategory'),
+  categorySuggestions: el('categorySuggestions'),
   editError: el('editError'),
   editSave: el('editSave'),
   editCancel: el('editCancel'),
@@ -76,6 +80,14 @@ const ui = {
   deleteQuestion: el('deleteQuestion'),
   confirmDelete: el('confirmDelete'),
   cancelDelete: el('cancelDelete'),
+
+  catDialog: el('catDialog'),
+  catForm: el('catForm'),
+  catOptions: el('catOptions'),
+  newCatInput: el('newCatInput'),
+  createCatBtn: el('createCatBtn'),
+  closeCatBtn: el('closeCatBtn'),
+  catError: el('catError'),
 };
 
 const state = {
@@ -84,6 +96,7 @@ const state = {
   list: { id: null, revision: 0, items: [] },
   adding: false,
   editing: null,
+  pendingCategory: '',
   source: null,
   pollTimer: null,
   bannerDismissed: false,
@@ -226,6 +239,111 @@ function toggleTheme() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sous-catégories (repas, rayons…)                                    */
+/* ------------------------------------------------------------------ */
+
+function categoryStorageKey() {
+  return state.listId ? `mlc:category:${state.listId}` : null;
+}
+
+function readStoredCategory() {
+  const key = categoryStorageKey();
+  if (!key) return '';
+  try {
+    return cleanCategory(localStorage.getItem(key));
+  } catch {
+    return '';
+  }
+}
+
+function setPendingCategory(value) {
+  state.pendingCategory = cleanCategory(value);
+  const key = categoryStorageKey();
+  if (key) {
+    try {
+      localStorage.setItem(key, state.pendingCategory);
+    } catch { /* mode privé */ }
+  }
+  updateCategoryUi();
+}
+
+function updateCategoryUi() {
+  const value = state.pendingCategory;
+  ui.catBtnLabel.textContent = value || 'Catégorie';
+  ui.catBtn.classList.toggle('is-set', Boolean(value));
+  ui.catBtn.title = value
+    ? `Catégorie : ${value} — toucher pour changer`
+    : 'Choisir une catégorie (repas, rayon…)';
+  ui.catBtn.setAttribute(
+    'aria-label',
+    value ? `Catégorie : ${value}. Changer de catégorie` : 'Choisir une catégorie'
+  );
+
+  ui.categorySuggestions.replaceChildren(
+    ...availableCategories().map((category) => {
+      const option = document.createElement('option');
+      option.value = category;
+      return option;
+    })
+  );
+}
+
+function categoryOption(value) {
+  const active = state.pendingCategory === value;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `cat-option${active ? ' is-active' : ''}`;
+  button.dataset.category = value;
+  button.setAttribute('aria-pressed', active ? 'true' : 'false');
+
+  const name = document.createElement('span');
+  name.className = 'cat-option-name';
+  name.textContent = value || 'Sans catégorie';
+
+  const count = document.createElement('span');
+  count.className = 'cat-option-count';
+  count.textContent = String(countByCategory(value));
+
+  button.append(name, count);
+  return button;
+}
+
+function renderCategoryOptions() {
+  ui.catOptions.replaceChildren(
+    categoryOption(''),
+    ...availableCategories().map((category) => categoryOption(category))
+  );
+}
+
+function openCategoryPicker() {
+  if (!state.listId) return;
+  renderCategoryOptions();
+  ui.newCatInput.value = '';
+  ui.catError.hidden = true;
+  ui.catDialog.showModal();
+}
+
+function chooseCategory(value) {
+  setPendingCategory(value);
+  if (ui.catDialog.open) ui.catDialog.close();
+  ui.nameInput.focus({ preventScroll: true });
+}
+
+function createCategory() {
+  const value = cleanCategory(ui.newCatInput.value);
+  if (!value) {
+    ui.catError.textContent = 'Écris un nom de catégorie (ex. Repas du lundi).';
+    ui.catError.hidden = false;
+    ui.newCatInput.focus();
+    return;
+  }
+  const existing = availableCategories().find(
+    (category) => category.toLocaleLowerCase('fr') === value.toLocaleLowerCase('fr')
+  );
+  chooseCategory(existing || value);
+}
+
+/* ------------------------------------------------------------------ */
 /* Rendu                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -296,13 +414,100 @@ function renderProgress(todo, done) {
   }
 }
 
+const CATEGORY_ICON =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3.2a2 2 0 0 1 1.4.6l7 7a2.5 2.5 0 0 1 0 3.5l-2.6 2.6a2.5 2.5 0 0 1-3.5 0l-7-7A2 2 0 0 1 4 10.2Z"/><circle cx="8" cy="9" r="1.3" fill="currentColor" stroke="none"/></svg>';
+
+const MAX_CATEGORY = 60;
+
+function cleanCategory(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_CATEGORY);
+}
+
+/** Catégories présentes dans la liste, dans l’ordre d’apparition. */
+function listCategories() {
+  const seen = new Set();
+  const order = [];
+  for (const item of state.list.items || []) {
+    const category = item.category || '';
+    if (category && !seen.has(category)) {
+      seen.add(category);
+      order.push(category);
+    }
+  }
+  return order;
+}
+
+function availableCategories() {
+  const categories = listCategories();
+  const pending = state.pendingCategory;
+  if (pending && !categories.includes(pending)) return [...categories, pending];
+  return categories;
+}
+
+function countByCategory(category) {
+  return (state.list.items || []).filter((item) => (item.category || '') === category).length;
+}
+
+function groupByCategory(items) {
+  const order = [];
+  const map = new Map();
+  for (const item of items) {
+    const key = item.category || '';
+    if (!map.has(key)) {
+      map.set(key, []);
+      order.push(key);
+    }
+    map.get(key).push(item);
+  }
+
+  // Les articles sans catégorie restent en tête quand d’autres sont classés
+  if (order.length > 1 && map.has('')) {
+    order.splice(order.indexOf(''), 1);
+    order.unshift('');
+  }
+  return order.map((key) => ({ key, items: map.get(key) }));
+}
+
+function categoryGroupRow(key, groupItems) {
+  const li = document.createElement('li');
+  li.className = 'cat-group';
+
+  const title = document.createElement('h3');
+  title.className = `cat-group-title${key ? '' : ' is-empty'}`;
+  title.innerHTML =
+    `${CATEGORY_ICON}<span class="cat-name">${escapeHtml(key || 'Sans catégorie')}</span>` +
+    `<span class="count">${groupItems.length}</span>`;
+
+  const list = document.createElement('ul');
+  list.className = 'cat-group-items';
+  list.setAttribute('aria-label', key || 'Sans catégorie');
+  list.append(...groupItems.map(itemRow));
+
+  li.append(title, list);
+  return li;
+}
+
+function renderList(container, items) {
+  const hasCategories = items.some((item) => item.category);
+  if (!hasCategories) {
+    container.replaceChildren(...items.map(itemRow));
+    return;
+  }
+  container.replaceChildren(
+    ...groupByCategory(items).map((group) => categoryGroupRow(group.key, group.items))
+  );
+}
+
 function renderItems() {
   const items = state.list.items || [];
   const todo = items.filter((item) => !item.done);
   const done = items.filter((item) => item.done);
 
-  ui.todoList.replaceChildren(...todo.map(itemRow));
-  ui.doneList.replaceChildren(...done.map(itemRow));
+  renderList(ui.todoList, todo);
+  renderList(ui.doneList, done);
 
   ui.todoCount.textContent = String(todo.length);
   ui.doneCount.textContent = String(done.length);
@@ -311,6 +516,7 @@ function renderItems() {
   ui.doneEmpty.hidden = done.length > 0;
 
   renderProgress(todo.length, done.length);
+  updateCategoryUi();
 }
 
 function applyList(list, { fromServer = true } = {}) {
@@ -390,6 +596,7 @@ function lastList() {
 async function loadList(id) {
   stopRealtime();
   state.listId = id;
+  state.pendingCategory = readStoredCategory();
   state.list = { id, revision: 0, items: [] };
   showView('list');
   renderItems();
@@ -581,10 +788,13 @@ async function addItem(event) {
   hideAddError();
 
   const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const category = state.pendingCategory;
+
   const optimisticItem = {
     id: tempId,
     name,
     quantity: qty,
+    category,
     done: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -598,7 +808,11 @@ async function addItem(event) {
       list.items.push(optimisticItem);
       list.revision += 1;
     },
-    request: () => api(itemsPath(), { method: 'POST', body: JSON.stringify({ name, quantity: qty }) }),
+    request: () =>
+      api(itemsPath(), {
+        method: 'POST',
+        body: JSON.stringify({ name, quantity: qty, category }),
+      }),
     errorMessage: 'Impossible d’ajouter l’article. Vérifie ta connexion puis réessaie.',
   });
 
@@ -643,6 +857,7 @@ function openEdit(itemId) {
   state.editing = item;
   ui.editName.value = item.name;
   ui.editQty.value = item.quantity || '';
+  ui.editCategory.value = item.category || '';
   ui.editError.hidden = true;
   ui.deleteConfirm.hidden = true;
   ui.editDelete.hidden = false;
@@ -664,6 +879,7 @@ async function saveEdit(event) {
 
   const name = ui.editName.value.trim();
   const quantity = ui.editQty.value.trim();
+  const category = cleanCategory(ui.editCategory.value);
   if (!name) {
     ui.editError.textContent = 'Le nom de l’article ne peut pas être vide.';
     ui.editError.hidden = false;
@@ -680,13 +896,14 @@ async function saveEdit(event) {
       if (target) {
         target.name = name;
         target.quantity = quantity;
+        target.category = category;
       }
       list.revision += 1;
     },
     request: () =>
       api(itemPath(item.id), {
         method: 'PATCH',
-        body: JSON.stringify({ name, quantity }),
+        body: JSON.stringify({ name, quantity, category }),
       }),
     errorMessage: 'Impossible d’enregistrer la modification. Réessaie.',
   });
@@ -724,7 +941,11 @@ async function restoreItem(item) {
     request: async () => {
       const created = await api(itemsPath(), {
         method: 'POST',
-        body: JSON.stringify({ name: item.name, quantity: item.quantity || '' }),
+        body: JSON.stringify({
+          name: item.name,
+          quantity: item.quantity || '',
+          category: item.category || '',
+        }),
       });
       if (!item.done || !created || !created.list) return created;
 
@@ -818,6 +1039,32 @@ ui.resumeBtn.addEventListener('click', () => {
 });
 
 ui.addForm.addEventListener('submit', addItem);
+
+ui.catBtn.addEventListener('click', openCategoryPicker);
+ui.catOptions.addEventListener('click', (event) => {
+  const button = event.target.closest('.cat-option');
+  if (!button) return;
+  chooseCategory(button.dataset.category || '');
+});
+ui.createCatBtn.addEventListener('click', createCategory);
+ui.closeCatBtn.addEventListener('click', () => ui.catDialog.close());
+function submitNewCategory() {
+  if (cleanCategory(ui.newCatInput.value)) createCategory();
+  else ui.catDialog.close();
+}
+ui.catForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  submitNewCategory();
+});
+ui.newCatInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    submitNewCategory();
+  }
+});
+ui.catDialog.addEventListener('click', (event) => {
+  if (event.target === ui.catDialog) ui.catDialog.close();
+});
 ui.nameInput.addEventListener('input', () => {
   if (ui.nameInput.getAttribute('aria-invalid') === 'true') hideAddError();
 });
