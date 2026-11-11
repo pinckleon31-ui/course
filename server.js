@@ -445,16 +445,26 @@ app.delete('/api/lists/:id/items/:itemId', asyncRoute(async (req, res) => {
 /* Pages                                                               */
 /* ------------------------------------------------------------------ */
 
-app.use(express.static(PUBLIC_DIR, { extensions: ['html'], etag: true, maxAge: 0 }));
+app.use(express.static(PUBLIC_DIR, {
+  extensions: ['html'],
+  etag: true,
+  maxAge: 0,
+  setHeaders(res) {
+    // Les fichiers changent souvent : on force la revalidation (ETag → 304 si inchangé)
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    res.setHeader('CDN-Cache-Control', 'no-store');
+  },
+}));
 
 // Lien de partage : /l/<id secret>
-app.get('/l/:id', (req, res) => {
+function sendPage(res) {
+  res.set('Cache-Control', 'no-cache, must-revalidate');
+  res.set('CDN-Cache-Control', 'no-store');
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
-});
+}
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
-});
+app.get('/l/:id', (req, res) => sendPage(res));
+app.get('/', (req, res) => sendPage(res));
 
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {

@@ -207,6 +207,16 @@ a { color: var(--accent); }
 .icon-btn-share { color: var(--accent-strong); background: var(--accent-soft); border-color: transparent; }
 .icon-btn-share:hover { color: var(--accent-strong); border-color: var(--accent-ring); }
 
+.theme-label {
+  display: none;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+@media (min-width: 560px) {
+  .theme-label { display: inline; }
+}
+.icon-btn[aria-pressed="true"] { color: var(--ink); }
 .icon-btn-theme .icon-moon { display: none; }
 :root[data-theme="dark"] .icon-btn-theme .icon-sun { display: none; }
 :root[data-theme="dark"] .icon-btn-theme .icon-moon { display: inline; }

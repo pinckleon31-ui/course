@@ -88,9 +88,18 @@ avec une couleur d’accent unique par thème (vert profond en clair, vert menth
 
 - Au premier chargement, le thème suit `prefers-color-scheme`.
 - Un script inline applique le thème **avant le premier rendu** : aucun flash blanc.
-- Le bouton soleil/lune de l’en-tête bascule et mémorise le choix (`localStorage`, clé `mlc:theme`).
+- Le bouton (soleil/lune, avec le libellé « Sombre »/« Clair » sur écran large) bascule et
+  mémorise le choix (`localStorage`, clé `mlc:theme`).
+- Ce script est **autonome** : il gère lui-même le clic, sans dépendre de `app.js`.
+  Un ancien `app.js` en cache ne peut donc plus casser le bouton.
 - Tant qu’aucun choix explicite n’a été fait, un changement de thème du système est suivi.
+- `?theme=dark` ou `?theme=light` force un thème (utile si le stockage local est bloqué,
+  par exemple dans une iframe restreinte).
 - `color-scheme` et `<meta name="theme-color">` sont mis à jour pour les barres du navigateur.
+- Les fichiers `styles.css` et `app.js` sont chargés avec un paramètre de version
+  (`?v=…`) et servis en `Cache-Control: no-cache` : après une mise à jour, le navigateur
+  récupère bien la nouvelle version. **Incrémentez ce paramètre** dans `public/index.html`
+  à chaque modification du CSS ou du JS.
 
 ---
 
@@ -231,6 +240,7 @@ recaler leur affichage. Limites : 120 caractères pour le nom, 40 pour la quanti
 | `password authentication failed` | URL modifiée à la main | Supprimez la variable et recréez la référence `${{Postgres.DATABASE_URL}}` |
 | Le déploiement reste « unhealthy » | Le port n’est pas `PORT` | Ne définissez pas `PORT` manuellement, Railway l’injecte |
 | Rien ne se synchronise entre deux téléphones | Proxy qui bufferise le SSE | L’application bascule automatiquement sur une interrogation toutes les 6 s ; vérifiez l’indicateur « Synchronisé » |
+| Le bouton de thème ne change rien | Ancien CSS/JS gardé en cache | Rechargez la page (voire videz le cache). Les fichiers sont désormais versionnés (`?v=…`) et le clic est géré par le script inline. Test de contrôle : ouvrez `?theme=dark` |
 | Lien perdu | — | Les liens ne sont pas listés publiquement : utilisez « Reprendre ma dernière liste » sur l’accueil du même navigateur |
 
 ---

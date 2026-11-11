@@ -12,7 +12,6 @@
    ============================================================ */
 
 const LAST_LIST_KEY = 'mlc:lastListId';
-const THEME_KEY = 'mlc:theme';
 
 const el = (id) => document.getElementById(id);
 
@@ -198,44 +197,11 @@ function setSync(kind, text) {
 /* Thème clair / sombre                                                */
 /* ------------------------------------------------------------------ */
 
-function storedTheme() {
-  try {
-    return localStorage.getItem(THEME_KEY);
-  } catch {
-    return null;
-  }
-}
-
 function mediaQuery(query) {
   if (typeof window.matchMedia !== 'function') {
     return { matches: false, addEventListener: null, addListener: null };
   }
   return window.matchMedia(query);
-}
-
-const prefersDark = () => mediaQuery('(prefers-color-scheme: dark)');
-
-function systemTheme() {
-  return prefersDark().matches ? 'dark' : 'light';
-}
-
-function applyTheme(theme, { persist = false } = {}) {
-  document.documentElement.setAttribute('data-theme', theme);
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0d1411' : '#f6f7f4');
-  const label = theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre';
-  ui.themeToggle.setAttribute('aria-label', label);
-  ui.themeToggle.title = theme === 'dark' ? 'Mode clair' : 'Mode sombre';
-  if (persist) {
-    try {
-      localStorage.setItem(THEME_KEY, theme);
-    } catch { /* mode privé */ }
-  }
-}
-
-function toggleTheme() {
-  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  applyTheme(next, { persist: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1082,7 +1048,17 @@ ui.emptyCta.addEventListener('click', () => {
 
 ui.copyBtn.addEventListener('click', copyLink);
 ui.headerShare.addEventListener('click', shareLink);
-ui.themeToggle.addEventListener('click', toggleTheme);
+// Le thème est géré par le script inline de index.html (indépendant de ce fichier).
+// Repli minimal si ce script n’a pas pu s’exécuter.
+ui.themeToggle.addEventListener('click', () => {
+  if (window.__mlcTheme) return; // déjà traité par le script inline
+  const next =
+    document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try {
+    localStorage.setItem('mlc:theme', next);
+  } catch { /* mode privé */ }
+});
 ui.brandLink.addEventListener('click', (event) => {
   event.preventDefault();
   goTo('/');
@@ -1164,13 +1140,6 @@ document.addEventListener('keydown', (event) => {
   ui.nameInput.focus();
 });
 
-// Le thème suit le système tant que l’utilisateur n’a pas choisi explicitement
-const mediaTheme = prefersDark();
-const onSystemThemeChange = (event) => {
-  if (!storedTheme()) applyTheme(event.matches ? 'dark' : 'light');
-};
-if (mediaTheme.addEventListener) mediaTheme.addEventListener('change', onSystemThemeChange);
-else if (mediaTheme.addListener) mediaTheme.addListener(onSystemThemeChange);
 
 /* ------------------------------------------------------------------ */
 /* Démarrage                                                           */
@@ -1217,6 +1186,7 @@ function refreshHome() {
   }
 }
 
-applyTheme(document.documentElement.getAttribute('data-theme') || systemTheme());
+if (window.__mlcTheme) window.__mlcTheme.set(window.__mlcTheme.current());
 ui.topbar.classList.toggle('is-scrolled', window.scrollY > 6);
+console.info('[Ma liste de courses] build 2026-11-11a');
 route();
