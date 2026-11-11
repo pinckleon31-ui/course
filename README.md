@@ -8,10 +8,15 @@ restent synchronisés en direct (Server-Sent Events).
 - **Ajout en haut de l’écran** : « Lait », ou « Pommes » + quantité « 4 ».
 - **Lien de partage** copié en un appui ; la personne qui l’ouvre arrive sur la même liste.
 - **Deux sections** : « À acheter » puis « Achetés » (un article coché descend, décoché il remonte).
-- **Modification / suppression** via la feuille de détail d’un article.
+- **Barre de progression** : « 2 sur 5 achetés » et état de synchronisation en direct.
+- **Modification / suppression** via la feuille de détail d’un article, avec **Annuler** après suppression.
+- **Thème clair ou sombre** : bouton dans l’en-tête, choix mémorisé, mode système suivi par défaut.
 - **Temps réel** : chaque modification est poussée aux autres appareils, sans rechargement.
 - **Mise à jour optimiste** : l’écran réagit tout de suite ; en cas d’échec réseau, la modification
   est annulée et un message clair propose **Réessayer**.
+- **Partage natif** : sur mobile, le bouton « Partager » ouvre la feuille de partage du téléphone ;
+  le bouton principal copie le lien et confirme par « Lien copié ».
+- **Raccourci `/`** sur ordinateur : place le curseur dans le champ d’ajout.
 
 ---
 
@@ -22,7 +27,7 @@ restent synchronisés en direct (Server-Sent Events).
 | Serveur | Node.js 20+ / Express 4 |
 | Base de données | PostgreSQL (production), fichier JSON local (aperçu / développement) |
 | Temps réel | Server-Sent Events (`/api/lists/:id/events`) |
-| Frontend | HTML + CSS + JavaScript natifs, mobile‑first, aucune étape de build |
+| Frontend | HTML + CSS + JavaScript natifs, mobile‑first, thèmes clair/sombre, aucune étape de build |
 | Déploiement | Railway (Dockerfile fourni), compatible tout hébergeur Node |
 
 ```
@@ -30,7 +35,7 @@ restent synchronisés en direct (Server-Sent Events).
 ├── server.js            # API REST + temps réel + stockage (PostgreSQL ou fichier)
 ├── public/
 │   ├── index.html       # accueil + écran de liste
-│   ├── styles.css       # thème clair, couleur d’accent unique, cibles tactiles 48 px
+│   ├── styles.css       # thèmes clair/sombre, couleur d’accent unique, cibles tactiles 48 px
 │   ├── app.js           # logique client, synchronisation, mises à jour optimistes
 │   └── 404.html
 ├── Dockerfile
@@ -51,9 +56,22 @@ L’identifiant d’une liste est un jeton aléatoire de 12 octets encodé en ba
 (16 caractères, ~96 bits d’entropie) : impossible à deviner. Le lien `/l/<jeton>` fait office
 de mot de passe : **toute personne qui possède le lien peut modifier la liste**.
 
+
+## 2. Thème clair / sombre
+
+L’interface utilise deux jeux de variables CSS (`:root` pour le clair, `:root[data-theme="dark"]`
+pour le sombre) : fonds, surfaces, bordures, texte et couleur d’accent sont tous dérivés de jetons,
+avec une couleur d’accent unique par thème (vert profond en clair, vert menthe en sombre).
+
+- Au premier chargement, le thème suit `prefers-color-scheme`.
+- Un script inline applique le thème **avant le premier rendu** : aucun flash blanc.
+- Le bouton soleil/lune de l’en-tête bascule et mémorise le choix (`localStorage`, clé `mlc:theme`).
+- Tant qu’aucun choix explicite n’a été fait, un changement de thème du système est suivi.
+- `color-scheme` et `<meta name="theme-color">` sont mis à jour pour les barres du navigateur.
+
 ---
 
-## 2. Lancer en local
+## 3. Lancer en local
 
 ```bash
 npm install
@@ -80,9 +98,9 @@ npm start
 
 ---
 
-## 3. Déployer sur Railway — pas à pas
+## 4. Déployer sur Railway — pas à pas
 
-### 3.1 Mettre le code sur GitHub
+### 4.1 Mettre le code sur GitHub
 
 ```bash
 git add .
@@ -90,20 +108,20 @@ git commit -m "Ma liste de courses"
 git push origin main
 ```
 
-### 3.2 Créer le projet et l’application
+### 4.2 Créer le projet et l’application
 
 1. Connectez-vous sur [railway.app](https://railway.app) → **New Project**.
 2. **Deploy from GitHub repo** → choisissez ce dépôt.
 3. Railway détecte le `Dockerfile` et lance le build. (Sinon : **Settings → Build →
    Builder = Dockerfile**, et **Deploy → Start Command = `node server.js`**.)
 
-### 3.3 Créer la base de données
+### 4.3 Créer la base de données
 
 1. Dans le projet : **New → Database → Add PostgreSQL**.
    Railway crée un service `Postgres` avec sa propre variable `DATABASE_URL`.
 2. Attendez que le service soit en état **Active**.
 
-### 3.4 Configurer les variables d’environnement
+### 4.4 Configurer les variables d’environnement
 
 Ouvrez le service de **l’application** (pas la base) → onglet **Variables** → **New Variable** :
 
@@ -128,7 +146,7 @@ attend la base (jusqu’à 5 tentatives) et crée les tables. Les logs affichent
 [store] PostgreSQL connecté — partage actif entre les appareils.
 ```
 
-### 3.5 Obtenir l’adresse publique
+### 4.5 Obtenir l’adresse publique
 
 1. Service application → **Settings → Networking → Public Networking → Generate Domain**.
 2. Railway fournit une URL du type `https://ma-liste-production.up.railway.app`.
@@ -136,7 +154,7 @@ attend la base (jusqu’à 5 tentatives) et crée les tables. Les logs affichent
 3. Vérifiez la santé du service : `https://<votre-domaine>/api/health` doit renvoyer
    `"databaseConfigured": true`.
 
-### 3.6 Vérifier le partage
+### 4.6 Vérifier le partage
 
 Sur un premier téléphone : ouvrez `https://<votre-domaine>/`, **Créer une liste**, ajoutez
 « Pommes » quantité « 4 », **Copier le lien de partage**.
@@ -146,7 +164,7 @@ la liste est dans son dernier état, base PostgreSQL à l’appui.
 
 ---
 
-## 4. Aperçu Arena : ce qui marche, ce qui ne marche pas
+## 5. Aperçu Arena : ce qui marche, ce qui ne marche pas
 
 L’aperçu Arena exécute l’application **sans accès à une base PostgreSQL**. Dans ce cas :
 
@@ -158,12 +176,12 @@ L’aperçu Arena exécute l’application **sans accès à une base PostgreSQL*
 - `GET /api/health` renvoie `"storage": "file"` et le message d’explication.
 
 **Aucun code n’est à modifier** pour activer le partage durable : dès que la variable
-`DATABASE_URL` est présente (étape 3.4), le serveur bascule automatiquement sur PostgreSQL,
+`DATABASE_URL` est présente (étape 4.4), le serveur bascule automatiquement sur PostgreSQL,
 crée les tables et affiche « Synchronisé ». Le bandeau d’avertissement disparaît de lui-même.
 
 ---
 
-## 5. API (si vous voulez brancher un autre client)
+## 6. API (si vous voulez brancher un autre client)
 
 | Méthode | Route | Corps | Effet |
 |---|---|---|---|
@@ -181,7 +199,7 @@ par liste.
 
 ---
 
-## 6. Dépannage
+## 7. Dépannage
 
 | Symptôme | Cause probable | Solution |
 |---|---|---|
@@ -194,7 +212,7 @@ par liste.
 
 ---
 
-## 7. Sécurité et vie privée
+## 8. Sécurité et vie privée
 
 - Pas de compte, pas de cookie de suivi, pas de service tiers : tout est stocké dans votre base.
 - Le lien est un jeton aléatoire non énumérable ; il n’est jamais indexé ni exposé par une route

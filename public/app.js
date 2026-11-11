@@ -4,6 +4,7 @@
    Ma liste de courses — logique client
    - route /            : accueil (créer une liste)
    - route /l/<secret>  : la liste partagée
+   - thème clair / sombre (mémorisé, suit le système par défaut)
    - synchronisation temps réel (SSE) + secours par interrogation
    - mises à jour optimistes : l’interface répond tout de suite,
      puis se recale sur la version du serveur ; en cas d’échec,
@@ -11,6 +12,7 @@
    ============================================================ */
 
 const LAST_LIST_KEY = 'mlc:lastListId';
+const THEME_KEY = 'mlc:theme';
 
 const el = (id) => document.getElementById(id);
 
@@ -19,6 +21,7 @@ const ui = {
   viewList: el('viewList'),
   viewMissing: el('viewMissing'),
 
+  topbar: document.querySelector('.topbar'),
   createBtn: el('createBtn'),
   resumeBtn: el('resumeBtn'),
   resumeName: el('resumeName'),
@@ -30,9 +33,14 @@ const ui = {
   addError: el('addError'),
 
   copyBtn: el('copyBtn'),
+  copyLabel: el('copyLabel'),
   headerShare: el('headerShare'),
   brandLink: el('brandLink'),
+  themeToggle: el('themeToggle'),
 
+  progressText: el('progressText'),
+  progress: el('progress'),
+  progressBar: el('progressBar'),
   syncState: el('syncState'),
   syncText: el('syncText'),
 
@@ -41,6 +49,7 @@ const ui = {
   todoCount: el('todoCount'),
   doneCount: el('doneCount'),
   emptyState: el('emptyState'),
+  emptyCta: el('emptyCta'),
   doneEmpty: el('doneEmpty'),
 
   toast: el('toast'),
@@ -55,6 +64,7 @@ const ui = {
   bannerClose: el('storageBannerClose'),
 
   editDialog: el('editDialog'),
+  editTitle: el('editTitle'),
   editForm: el('editForm'),
   editName: el('editName'),
   editQty: el('editQty'),
@@ -73,8 +83,8 @@ const state = {
   listId: null,
   list: { id: null, revision: 0, items: [] },
   adding: false,
-  editing: null, // article en cours d’édition
-  source: null, // EventSource
+  editing: null,
+  source: null,
   pollTimer: null,
   bannerDismissed: false,
   dbOnline: null,
@@ -84,9 +94,9 @@ const state = {
 /* Utilitaires                                                         */
 /* ------------------------------------------------------------------ */
 
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
+const clone = (value) => JSON.parse(JSON.stringify(value));
+
+const plural = (n, singular, pluralForm) => `${n} ${n > 1 ? pluralForm : singular}`;
 
 function escapeHtml(text) {
   return String(text)
@@ -148,10 +158,71 @@ function hideToast() {
   }, 220);
 }
 
+const SYNC_MESSAGES = {
+  connecting: 'Connexion…',
+  live: 'Synchronisé',
+  polling: 'Synchronisé',
+  offline: 'Reconnexion…',
+  error: 'Hors connexion',
+};
+
 function setSync(kind, text) {
   ui.syncState.classList.remove('is-live', 'is-offline', 'is-error');
-  if (kind) ui.syncState.classList.add(`is-${kind}`);
-  ui.syncText.textContent = text;
+  if (kind === 'live' || kind === 'polling') ui.syncState.classList.add('is-live');
+  else if (kind === 'offline') ui.syncState.classList.add('is-offline');
+  else if (kind === 'error') ui.syncState.classList.add('is-error');
+
+  ui.syncText.textContent = text || SYNC_MESSAGES[kind] || '';
+  ui.syncState.title =
+    kind === 'live'
+      ? 'Les modifications apparaissent en direct sur les autres appareils'
+      : kind === 'offline' || kind === 'error'
+        ? 'Connexion perdue — les modifications seront réessayées'
+        : 'Connexion au serveur';
+}
+
+/* ------------------------------------------------------------------ */
+/* Thème clair / sombre                                                */
+/* ------------------------------------------------------------------ */
+
+function storedTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function mediaQuery(query) {
+  if (typeof window.matchMedia !== 'function') {
+    return { matches: false, addEventListener: null, addListener: null };
+  }
+  return window.matchMedia(query);
+}
+
+const prefersDark = () => mediaQuery('(prefers-color-scheme: dark)');
+
+function systemTheme() {
+  return prefersDark().matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme, { persist = false } = {}) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0d1411' : '#f6f7f4');
+  const label = theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre';
+  ui.themeToggle.setAttribute('aria-label', label);
+  ui.themeToggle.title = theme === 'dark' ? 'Mode clair' : 'Mode sombre';
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch { /* mode privé */ }
+  }
+}
+
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(next, { persist: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -200,6 +271,31 @@ function itemRow(item) {
   return li;
 }
 
+function renderProgress(todo, done) {
+  const total = todo + done;
+
+  if (total === 0) {
+    ui.progressText.textContent = 'Liste vide';
+    ui.progress.hidden = true;
+    ui.progress.setAttribute('aria-valuenow', '0');
+    ui.progressBar.style.width = '0%';
+    return;
+  }
+
+  ui.progress.hidden = false;
+  const percent = Math.round((done / total) * 100);
+  ui.progressBar.style.width = `${percent}%`;
+  ui.progress.setAttribute('aria-valuenow', String(percent));
+
+  if (done === 0) {
+    ui.progressText.textContent = `${plural(todo, 'article', 'articles')} à acheter`;
+  } else if (todo === 0) {
+    ui.progressText.textContent = `Tout est acheté · ${done}/${total}`;
+  } else {
+    ui.progressText.textContent = `${done} sur ${total} acheté${done > 1 ? 's' : ''}`;
+  }
+}
+
 function renderItems() {
   const items = state.list.items || [];
   const todo = items.filter((item) => !item.done);
@@ -213,6 +309,8 @@ function renderItems() {
 
   ui.emptyState.hidden = todo.length > 0 || done.length > 0;
   ui.doneEmpty.hidden = done.length > 0;
+
+  renderProgress(todo.length, done.length);
 }
 
 function applyList(list, { fromServer = true } = {}) {
@@ -233,13 +331,10 @@ function showView(view) {
   ui.viewMissing.hidden = view !== 'missing';
   ui.headerShare.hidden = view !== 'list';
 
-  if (view === 'list') {
-    document.title = 'Ma liste de courses';
-  } else if (view === 'home') {
-    document.title = 'Ma liste de courses';
-  } else {
-    document.title = 'Liste introuvable — Ma liste de courses';
-  }
+  document.title =
+    view === 'missing' ? 'Liste introuvable — Ma liste de courses' : 'Ma liste de courses';
+
+  window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
 function pathForList(id) {
@@ -298,7 +393,7 @@ async function loadList(id) {
   state.list = { id, revision: 0, items: [] };
   showView('list');
   renderItems();
-  setSync(null, 'Connexion…');
+  setSync('connecting');
 
   try {
     const { list } = await api(`/api/lists/${encodeURIComponent(id)}`);
@@ -306,12 +401,16 @@ async function loadList(id) {
     applyList(list);
     startRealtime(id);
     checkStorageMode();
+
+    if (list.items.length === 0 && mediaQuery('(hover: hover) and (pointer: fine)').matches) {
+      ui.nameInput.focus({ preventScroll: true });
+    }
   } catch (error) {
     if (error.status === 404) {
       showView('missing');
       return;
     }
-    setSync('error', 'Liste indisponible');
+    setSync('error');
     showToast(error.message, {
       error: true,
       action: { label: 'Réessayer', onClick: () => loadList(id) },
@@ -349,10 +448,7 @@ function stopRealtime() {
     state.source.close();
     state.source = null;
   }
-  if (state.pollTimer) {
-    clearInterval(state.pollTimer);
-    state.pollTimer = null;
-  }
+  stopPolling();
 }
 
 function startRealtime(id) {
@@ -363,7 +459,7 @@ function startRealtime(id) {
     state.source = source;
 
     source.addEventListener('open', () => {
-      setSync('live', 'Synchronisé · les autres appareils voient la liste en direct');
+      setSync('live');
       stopPolling();
     });
 
@@ -372,21 +468,19 @@ function startRealtime(id) {
         const data = JSON.parse(event.data);
         if (data && data.list) {
           applyList(data.list);
-          setSync('live', 'Synchronisé · les autres appareils voient la liste en direct');
+          setSync('live');
         }
       } catch { /* ignore */ }
     });
 
     source.addEventListener('error', () => {
-      // EventSource retente tout seul ; on affiche l’état et on active un secours
-      setSync('offline', 'Reconnexion en cours…');
+      setSync('offline');
       startPolling(id);
     });
   } else {
     startPolling(id);
+    setSync('polling');
   }
-
-  document.addEventListener('visibilitychange', onVisibility);
 }
 
 function startPolling(id) {
@@ -396,11 +490,9 @@ function startPolling(id) {
     try {
       const { list } = await api(`/api/lists/${encodeURIComponent(id)}`);
       applyList(list);
-      if (!state.source || state.source.readyState === 2) {
-        setSync('live', 'Synchronisé');
-      }
+      if (!state.source || state.source.readyState === 2) setSync('polling');
     } catch {
-      setSync('offline', 'Hors connexion — nouvelle tentative…');
+      setSync('offline');
     }
   }, 6000);
 }
@@ -425,10 +517,6 @@ async function onVisibility() {
 /* Mutations optimistes                                                */
 /* ------------------------------------------------------------------ */
 
-/**
- * Applique une modification localement, puis l’envoie au serveur.
- * En cas d’échec : retour à l’état précédent + message clair + « Réessayer ».
- */
 async function mutate({ applyLocally, request, errorMessage }) {
   const previous = clone(state.list);
   const optimistic = clone(state.list);
@@ -445,7 +533,10 @@ async function mutate({ applyLocally, request, errorMessage }) {
     renderItems();
     showToast(error.message || errorMessage, {
       error: true,
-      action: { label: 'Réessayer', onClick: () => mutate({ applyLocally, request, errorMessage }) },
+      action: {
+        label: 'Réessayer',
+        onClick: () => mutate({ applyLocally, request, errorMessage }),
+      },
     });
     if (error.status === 404) loadList(state.listId);
     return false;
@@ -454,6 +545,10 @@ async function mutate({ applyLocally, request, errorMessage }) {
 
 function itemPath(itemId) {
   return `/api/lists/${encodeURIComponent(state.listId)}/items/${encodeURIComponent(itemId)}`;
+}
+
+function itemsPath() {
+  return `/api/lists/${encodeURIComponent(state.listId)}/items`;
 }
 
 function findItem(id) {
@@ -467,7 +562,6 @@ async function addItem(event) {
   const rawName = ui.nameInput.value.trim();
   const quantity = ui.qtyInput.value.trim();
 
-  // « Pommes · 4 » saisi d’un coup : le nom et la quantité sont séparés
   let name = rawName;
   let qty = quantity;
   const split = rawName.match(/^(.*?)\s*[·•]\s*([^·•]{1,40})$/);
@@ -504,11 +598,7 @@ async function addItem(event) {
       list.items.push(optimisticItem);
       list.revision += 1;
     },
-    request: () =>
-      api(`/api/lists/${encodeURIComponent(state.listId)}/items`, {
-        method: 'POST',
-        body: JSON.stringify({ name, quantity: qty }),
-      }),
+    request: () => api(itemsPath(), { method: 'POST', body: JSON.stringify({ name, quantity: qty }) }),
     errorMessage: 'Impossible d’ajouter l’article. Vérifie ta connexion puis réessaie.',
   });
 
@@ -557,6 +647,7 @@ function openEdit(itemId) {
   ui.deleteConfirm.hidden = true;
   ui.editDelete.hidden = false;
   ui.editForm.querySelector('.sheet-actions').hidden = false;
+  ui.editTitle.textContent = item.done ? 'Article acheté' : 'Modifier l’article';
   ui.editDialog.showModal();
   setTimeout(() => ui.editName.focus({ preventScroll: true }), 60);
 }
@@ -606,7 +697,8 @@ async function deleteItem() {
   if (!item) return;
   closeEdit();
 
-  await mutate({
+  const removed = { ...item };
+  const ok = await mutate({
     applyLocally: (list) => {
       list.items = list.items.filter((it) => it.id !== item.id);
       list.revision += 1;
@@ -614,15 +706,64 @@ async function deleteItem() {
     request: () => api(itemPath(item.id), { method: 'DELETE' }),
     errorMessage: 'Impossible de supprimer l’article. Réessaie.',
   });
+
+  if (ok) {
+    showToast('Article supprimé', {
+      duration: 5000,
+      action: { label: 'Annuler', onClick: () => restoreItem(removed) },
+    });
+  }
+}
+
+async function restoreItem(item) {
+  await mutate({
+    applyLocally: (list) => {
+      list.items.push({ ...item });
+      list.revision += 1;
+    },
+    request: async () => {
+      const created = await api(itemsPath(), {
+        method: 'POST',
+        body: JSON.stringify({ name: item.name, quantity: item.quantity || '' }),
+      });
+      if (!item.done || !created || !created.list) return created;
+
+      const candidate = created.list.items.find(
+        (it) => !it.done && it.name === item.name && (it.quantity || '') === (item.quantity || '')
+      );
+      if (!candidate) return created;
+
+      return api(itemPath(candidate.id), {
+        method: 'PATCH',
+        body: JSON.stringify({ done: true }),
+      });
+    },
+    errorMessage: 'Impossible de restaurer l’article. Réessaie.',
+  });
 }
 
 /* ------------------------------------------------------------------ */
 /* Lien de partage                                                     */
 /* ------------------------------------------------------------------ */
 
+function shareUrl() {
+  return `${window.location.origin}${pathForList(state.listId)}`;
+}
+
+let copyTimer = null;
+function markCopied() {
+  ui.copyBtn.classList.add('is-copied');
+  ui.copyLabel.textContent = 'Lien copié';
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => {
+    ui.copyBtn.classList.remove('is-copied');
+    ui.copyLabel.textContent = 'Copier le lien de partage';
+  }, 2400);
+}
+
 async function copyLink() {
   if (!state.listId) return;
-  const url = `${window.location.origin}${pathForList(state.listId)}`;
+  const url = shareUrl();
 
   try {
     if (navigator.clipboard && window.isSecureContext) {
@@ -640,9 +781,29 @@ async function copyLink() {
       area.remove();
     }
     showToast('Lien copié');
+    markCopied();
   } catch {
     showToast(`Copie impossible. Voici le lien à partager : ${url}`, { duration: 9000 });
   }
+}
+
+async function shareLink() {
+  if (!state.listId) return;
+  const url = shareUrl();
+
+  if (navigator.share && window.isSecureContext) {
+    try {
+      await navigator.share({
+        title: 'Ma liste de courses',
+        text: 'Voici notre liste de courses partagée :',
+        url,
+      });
+      return;
+    } catch (error) {
+      if (error && error.name === 'AbortError') return;
+    }
+  }
+  copyLink();
 }
 
 /* ------------------------------------------------------------------ */
@@ -660,8 +821,6 @@ ui.addForm.addEventListener('submit', addItem);
 ui.nameInput.addEventListener('input', () => {
   if (ui.nameInput.getAttribute('aria-invalid') === 'true') hideAddError();
 });
-
-// Entrée depuis le champ quantité déclenche aussi l’ajout
 ui.qtyInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
     event.preventDefault();
@@ -669,8 +828,14 @@ ui.qtyInput.addEventListener('keydown', (event) => {
   }
 });
 
+ui.emptyCta.addEventListener('click', () => {
+  ui.nameInput.focus();
+  ui.nameInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+});
+
 ui.copyBtn.addEventListener('click', copyLink);
-ui.headerShare.addEventListener('click', copyLink);
+ui.headerShare.addEventListener('click', shareLink);
+ui.themeToggle.addEventListener('click', toggleTheme);
 ui.brandLink.addEventListener('click', (event) => {
   event.preventDefault();
   goTo('/');
@@ -704,7 +869,6 @@ ui.cancelDelete.addEventListener('click', () => {
 });
 ui.confirmDelete.addEventListener('click', deleteItem);
 
-// Fermeture de la feuille : clic sur le fond ou touche Échap
 ui.editDialog.addEventListener('click', (event) => {
   if (event.target === ui.editDialog) closeEdit();
 });
@@ -728,7 +892,38 @@ window.addEventListener('popstate', route);
 window.addEventListener('online', () => {
   if (state.listId) onVisibility();
 });
-window.addEventListener('offline', () => setSync('offline', 'Hors connexion — les modifications seront à réessayer'));
+window.addEventListener('offline', () => setSync('offline'));
+
+window.addEventListener(
+  'scroll',
+  () => {
+    ui.topbar.classList.toggle('is-scrolled', window.scrollY > 6);
+  },
+  { passive: true }
+);
+
+// Barre d’espace ? Non : « / » place le curseur dans le champ d’ajout
+document.addEventListener('keydown', (event) => {
+  if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+  const target = event.target;
+  if (
+    target &&
+    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  ) {
+    return;
+  }
+  if (state.view !== 'list' || ui.editDialog.open) return;
+  event.preventDefault();
+  ui.nameInput.focus();
+});
+
+// Le thème suit le système tant que l’utilisateur n’a pas choisi explicitement
+const mediaTheme = prefersDark();
+const onSystemThemeChange = (event) => {
+  if (!storedTheme()) applyTheme(event.matches ? 'dark' : 'light');
+};
+if (mediaTheme.addEventListener) mediaTheme.addEventListener('change', onSystemThemeChange);
+else if (mediaTheme.addListener) mediaTheme.addListener(onSystemThemeChange);
 
 /* ------------------------------------------------------------------ */
 /* Démarrage                                                           */
@@ -775,4 +970,6 @@ function refreshHome() {
   }
 }
 
+applyTheme(document.documentElement.getAttribute('data-theme') || systemTheme());
+ui.topbar.classList.toggle('is-scrolled', window.scrollY > 6);
 route();
